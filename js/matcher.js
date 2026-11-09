@@ -37,6 +37,13 @@ const LETTER_NAMES = {
   "ي": "يا", "ع": "عين", "ط": "طا", "س": "سين", "ح": "حا", "ق": "قاف", "ن": "نون",
 };
 const NAME_TO_LETTER = Object.fromEntries(Object.entries(LETTER_NAMES).map(([l, n]) => [n, l]));
+// Uthmani spellings whose usual written form differs in consonants.
+const SPECIAL = {
+  "الاي": ["اللاي"], // ٱلَّٰٓـِٔى = اللائي
+  "والاي": ["واللاي"],
+  "ليكه": ["الايكه"], // لْـَٔيْكَةِ = الأيكة
+  "يبنوم": ["يابناوم", "يابنام"], // يَبْنَؤُمَّ = يا ابن أم
+};
 const MUQATTAAT = new Set(["الم", "المص", "الر", "المر", "كهيعص", "طه", "طسم", "طس", "يس", "ص", "حم", "عسق", "ق", "ن"]);
 
 function lev(a, b) {
@@ -86,6 +93,10 @@ export function buildWords(verses) {
     parts.forEach((display, i) => {
       const norm = normalize(display);
       const w = { display, surah: v.surah, ayah: v.ayah, index: i, ...makeForm(norm) };
+      const alts = (SPECIAL[norm] || []).slice();
+      if (display.includes("\u06DC")) alts.push(norm.replace(/\u0635/g, "\u0633")); // ص with small seen reads س (بصطة)
+      if (display.includes("\u06E8")) alts.push(normalize(display.replace(/\u06E8/g, "\u0646"))); // small noon (نُـۨجِى)
+      if (alts.length) w.alts = alts.map(makeForm);
       if (i === 0 && MUQATTAAT.has(norm.replace(/ء/g, ""))) {
         const names = [...norm].map((ch) => LETTER_NAMES[ch] || ch);
         w.alts = [makeForm(names.join(""))];
@@ -119,9 +130,9 @@ export function tokenize(transcript) {
   return out;
 }
 
-const MATCH = 0.75; // clearly the right word (also used to detect skips/repeats)
-const NEAR = 0.6; // close enough to accept as the current word
-const WRONG = 0.45; // an attempt at this word, but wrong
+const OK = 0.8; // counts as said correctly (spelling variants of the same consonants score 1)
+const MATCH = 0.75; // used to recognise skips and repetitions
+const WRONG = 0.45; // an attempt at this word, but wrong (close words land here)
 const TRY = 0.3; // faint resemblance: decided as wrong once the reciter repeats or moves on
 const WINDOW = 6; // how far ahead to look for skipped words
 const BACK = 3; // how far back a repetition/correction may go
@@ -168,7 +179,7 @@ export function align(words, tokens, opts = {}) {
 
     // 1) the expected word itself (also: one word heard as two tokens, or two words as one)
     const simP = atEnd ? 0 : similarity(tok, words[p]);
-    if (!atEnd && (simP >= MATCH || (simP >= NEAR && !(p + 1 < n && similarity(tok, words[p + 1]) >= MATCH)))) {
+    if (!atEnd && simP >= OK) {
       markOk(p);
       heard[p] = tok.norm;
       p++;
@@ -176,12 +187,21 @@ export function align(words, tokens, opts = {}) {
       continue;
     }
     if (!atEnd && next) {
-      const joined = makeForm(tok.norm + next.norm);
-      if (similarity(joined, words[p]) >= MATCH) {
+      // one Uthmani word heard as two or three tokens (يَٰٓأَيُّهَا = يا أيها)
+      let used = 0;
+      for (const k of [1, 2]) {
+        if (!tokens[t + k]) break;
+        const joined = makeForm(tokens.slice(t, t + k + 1).map((x) => x.norm).join(""));
+        if (similarity(joined, words[p]) >= OK) {
+          used = k;
+          break;
+        }
+      }
+      if (used) {
         markOk(p);
-        heard[p] = tok.norm + " " + next.norm;
+        heard[p] = tokens.slice(t, t + used + 1).map((x) => x.norm).join(" ");
         p++;
-        t++;
+        t += used;
         started = true;
         continue;
       }
@@ -246,8 +266,9 @@ export function align(words, tokens, opts = {}) {
       if (!next) break; // wait for more speech before deciding
     }
 
-    // 4) an attempt at the current word that came out wrong
-    if (simP >= WRONG) {
+    // 4) an attempt at the current word that came out wrong (includes near misses
+    //    like الظالمين for الضالين), unless the word belongs further ahead
+    if (simP >= WRONG && !(p + 1 < n && similarity(tok, words[p + 1]) >= OK)) {
       status[p] = "wrong";
       heard[p] = tok.norm;
       p++;

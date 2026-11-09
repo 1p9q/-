@@ -86,12 +86,18 @@ test("hinted words are counted as hinted", () => {
   assert.deepEqual(r.status, ["ok", "ok", "hinted", "ok"]);
 });
 
-test("a close-but-not-exact word is accepted, not left waiting", () => {
+test("a close-but-not-exact word is wrong, and the reciter moves on", () => {
   // الضالين heard as الظالمين; عالين for العالمين
   let r = run(1, 7, 7, "صراط الذين أنعمت عليهم غير المغضوب عليهم ولا الظالمين");
-  assert.equal(r.status.at(-1), "ok");
-  r = run(1, 2, 2, "الحمد لله رب عالين");
-  assert.deepEqual(r.status, ["ok", "ok", "ok", "ok"]);
+  assert.equal(r.status.at(-1), "wrong");
+  r = run(1, 2, 3, "الحمد لله رب عالين الرحمن");
+  assert.deepEqual(r.status.slice(0, 5), ["ok", "ok", "ok", "wrong", "ok"]);
+  assert.equal(r.pointer, 5);
+});
+
+test("same consonants with different vowel letters still count as correct", () => {
+  const r = run(2, 3, 3, "الذين يومنون بالغيب ويقيمون الصلوة ومما رزقنهم ينفقون", { final: true });
+  assert.ok(r.status.every((s) => s === "ok"), r.status.join(","));
 });
 
 test("retrying an unrecognizable word gets a decision", () => {
