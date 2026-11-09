@@ -1,0 +1,13 @@
+{
+  "name": "رفيق الحفظ",
+  "short_name": "رفيق الحفظ",
+  "description": "تسميع القرآن الكريم بالصوت مع كشف الأخطاء",
+  "lang": "ar",
+  "dir": "rtl",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f3ea",
+  "theme_color": "#0f5d4a",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
