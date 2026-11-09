@@ -19,76 +19,161 @@ const loadSurah = (n) => {
 };
 
 // ---------- model worker (shared across views) ----------
-const worker = new Worker(new URL("./whisper-worker.js", import.meta.url), { type: "module" });
-let modelState = "idle"; // idle | loading | ready | error
-let modelProgress = { loaded: 0, total: 0 };
+// Two sizes of the same Tarteel model; sizes are the exact bytes downloaded.
+const MODEL_INFO = {
+  base: { bytes: 162453466, label: "الدقيقة", mbText: "١٥٥" },
+  tiny: { bytes: 98000516, label: "الخفيفة", mbText: "٩٣" },
+};
+const LS = {
+  get(k) {
+    try {
+      return localStorage.getItem(k);
+    } catch {
+      return null;
+    }
+  },
+  set(k, v) {
+    try {
+      v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v);
+    } catch {}
+  },
+};
+let modelName = LS.get("tartil.model") === "tiny" ? "tiny" : "base";
+let modelState = "idle"; // idle | loading | preparing | warming | ready | error
+let modelLoaded = 0;
 let modelError = "";
 let modelDevice = "";
+let worker = null;
+let watchdog = null;
 const pending = new Map();
 let nextId = 1;
 const listeners = new Set();
 const notify = () => listeners.forEach((f) => f());
 
-worker.onmessage = (e) => {
-  const m = e.data;
-  if (m.type === "progress") {
-    modelState = "loading";
-    modelProgress = m;
-  } else if (m.type === "warming") modelState = "warming";
-  else if (m.type === "ready") {
-    modelState = "ready";
-    modelDevice = m.device;
-    try {
-      localStorage.setItem("tartil.modelCached", "1");
-    } catch {}
-  }
-  else if (m.type === "result" || m.type === "error") {
-    if (m.type === "error" && !pending.has(m.id)) {
-      modelState = "error";
-      modelError = m.message;
-    }
-    const p = pending.get(m.id);
-    if (p) {
-      pending.delete(m.id);
-      m.type === "result" ? p.resolve(m) : p.reject(new Error(m.message));
-    }
-    if (m.type === "result") modelState = "ready";
-  }
-  notify();
-};
-function loadModel() {
-  if (modelState === "idle" || modelState === "error") {
-    modelError = "";
-    modelState = "loading";
-    worker.postMessage({ type: "load" });
-    notify();
-  }
+// A load that started but never finished means the browser closed the model
+// (usually not enough memory) or the page was reloaded mid-way.
+const unfinished = LS.get("tartil.loading");
+const crashes = +(LS.get("tartil.crashes") || 0) + (unfinished ? 1 : 0);
+if (unfinished) {
+  LS.set("tartil.crashes", String(crashes));
+  LS.set("tartil.loading", null);
+  LS.set("tartil.nowebgpu", "1"); // the graphics-chip path is the usual suspect
 }
+
+function fail(message) {
+  if (/load file|fetch|network|Failed to/i.test(message)) message = "تعذّر تحميل ملفات النموذج. تأكد من الاتصال بالإنترنت وأعد المحاولة.";
+  else if (/memory|allocation|out of/i.test(message)) message = "ذاكرة الجهاز ما كفت لتجهيز النموذج.";
+  clearTimeout(watchdog);
+  modelState = "error";
+  modelError = message;
+  LS.set("tartil.loading", null);
+  LS.set("tartil.crashes", String(+(LS.get("tartil.crashes") || 0) + 1));
+  for (const p of pending.values()) p.reject(new Error(message));
+  pending.clear();
+  if (worker) worker.terminate();
+  worker = null;
+  notify();
+}
+
+// If nothing at all arrives from the worker for a long time while loading, it
+// has died silently.
+function kick() {
+  clearTimeout(watchdog);
+  if (modelState === "ready" || modelState === "error" || modelState === "idle") return;
+  const limit = modelState === "loading" ? 60000 : 150000;
+  watchdog = setTimeout(() => fail("توقّف تجهيز النموذج — غالباً ذاكرة الجهاز ما كفت."), limit);
+}
+
+function startWorker() {
+  worker = new Worker(new URL("./whisper-worker.js", import.meta.url), { type: "module" });
+  worker.onerror = (e) => {
+    e.preventDefault?.();
+    fail("تعطّل النموذج في المتصفح" + (e.message ? `: ${e.message}` : ""));
+  };
+  worker.onmessage = (e) => {
+    const m = e.data;
+    if (m.type === "progress") {
+      if (modelState !== "preparing") modelState = "loading";
+      modelLoaded = m.loaded;
+    } else if (m.type === "preparing") modelState = "preparing";
+    else if (m.type === "webgpu-failed") LS.set("tartil.nowebgpu", "1");
+    else if (m.type === "warming") modelState = "warming";
+    else if (m.type === "ready") {
+      modelState = "ready";
+      modelDevice = m.device;
+      LS.set("tartil.loading", null);
+      LS.set("tartil.crashes", "0");
+      LS.set("tartil.modelCached", modelName);
+    } else if (m.type === "result" || m.type === "error") {
+      const p = pending.get(m.id);
+      if (p) {
+        pending.delete(m.id);
+        m.type === "result" ? p.resolve(m) : p.reject(new Error(m.message));
+        if (m.type === "result") modelState = "ready";
+      } else if (m.type === "error") return fail(m.message);
+    }
+    kick();
+    notify();
+  };
+}
+
+function loadModel() {
+  if (modelState !== "idle" && modelState !== "error") return;
+  if (!worker) startWorker();
+  modelError = "";
+  modelLoaded = 0;
+  modelState = "loading";
+  LS.set("tartil.loading", String(Date.now()));
+  worker.postMessage({ type: "load", model: modelName, webgpu: LS.get("tartil.nowebgpu") !== "1" });
+  kick();
+  notify();
+}
+
+function switchModel(name) {
+  if (name === modelName && modelState !== "error") return;
+  if (worker) worker.terminate();
+  worker = null;
+  clearTimeout(watchdog);
+  modelName = name;
+  LS.set("tartil.model", name);
+  modelState = "idle";
+  loadModel();
+}
+
 function transcribe(audio) {
   const id = nextId++;
   return new Promise((resolve, reject) => {
+    if (!worker) return reject(new Error("النموذج غير جاهز"));
     pending.set(id, { resolve, reject });
     worker.postMessage({ type: "transcribe", id, audio }, [audio.buffer]);
   });
 }
 
 function modelCard() {
-  if (modelState === "ready") return `<div class="model ok">✓ نموذج التلاوة جاهز${modelDevice === "webgpu" ? " ⚡ (يستخدم معالج الرسوميات)" : ""}</div>`;
-  if (modelState === "warming") return `<div class="model">⏳ تجهيز النموذج… (ثواني)</div>`;
+  const info = MODEL_INFO[modelName];
+  if (modelState === "ready")
+    return `<div class="model ok">✓ نموذج التلاوة جاهز (النسخة ${info.label})${modelDevice === "webgpu" ? " ⚡ يستخدم معالج الرسوميات" : ""}</div>`;
+  if (modelState === "preparing" || modelState === "warming")
+    return `<div class="model"><div>✓ اكتمل التحميل · ⏳ جاري تجهيز النموذج في ذاكرة الجهاز…</div>
+      <div class="progress indeterminate"><i></i></div><small class="muted">قد يأخذ حتى دقيقة على بعض الأجهزة.</small></div>`;
   if (modelState === "loading") {
-    const { loaded, total } = modelProgress;
-    // files start one after another, so measure against the known total (~162 MB)
-    const all = Math.max(total, 162 * 1048576);
-    const pct = Math.min(100, Math.round((loaded / all) * 100));
-    return `<div class="model"><div>جاري تحميل نموذج التلاوة… ${ar(pct)}٪ (${mb(loaded)} من ${mb(all)} ميجا)</div>
+    const pct = Math.min(100, Math.round((modelLoaded / info.bytes) * 100));
+    return `<div class="model"><div>جاري تحميل نموذج التلاوة… ${ar(pct)}٪ (${mb(modelLoaded)} من ${info.mbText} ميجا)</div>
       <div class="progress"><i style="width:${pct}%"></i></div><small class="muted">يتحمّل مرة وحدة فقط ويبقى محفوظ في الجهاز.</small></div>`;
   }
-  if (modelState === "error") return `<div class="model warn">تعذّر تحميل النموذج: ${esc(modelError)} <button class="btn small" id="retry">إعادة المحاولة</button></div>`;
-  return `<div class="model">النموذج يحتاج تحميل أول مرة (حوالي ١٦٠ ميجا). يُفضّل على شبكة واي فاي. <button class="btn small primary" id="dl">تحميل الآن</button></div>`;
+  const offerTiny = modelName === "base" ? `<button class="btn small primary" id="tiny">جرّب النسخة الخفيفة (${MODEL_INFO.tiny.mbText} ميجا)</button>` : "";
+  if (modelState === "error")
+    return `<div class="model warn"><div>⚠️ ${esc(modelError)}</div>
+      <div class="actions"><button class="btn small" id="retry">إعادة المحاولة</button>${offerTiny}</div></div>`;
+  if (crashes > 0 && modelName === "base")
+    return `<div class="model warn"><div>آخر محاولة لتجهيز النموذج ما اكتملت، غالباً لأن ذاكرة الجهاز ما كفت.</div>
+      <div class="actions">${offerTiny}<button class="btn small" id="dl">أعد المحاولة بالنسخة الدقيقة</button></div></div>`;
+  return `<div class="model">النموذج يحتاج تحميل أول مرة (حوالي ${info.mbText} ميجا). يُفضّل على شبكة واي فاي. <button class="btn small primary" id="dl">تحميل الآن</button></div>`;
 }
 function bindModelCard(root) {
   root.querySelector("#dl")?.addEventListener("click", loadModel);
   root.querySelector("#retry")?.addEventListener("click", loadModel);
+  root.querySelector("#tiny")?.addEventListener("click", () => switchModel("tiny"));
 }
 
 // ---------- views ----------
@@ -143,6 +228,10 @@ async function viewSetup(n) {
         <label><input type="radio" name="mode" value="h" checked /><span><b>🙈 اختبار حفظ</b><small>الآيات مخفية وتظهر بعد قراءتها</small></span></label>
         <label><input type="radio" name="mode" value="f" /><span><b>👀 قراءة مع متابعة</b><small>النص ظاهر ويتلوّن حسب قراءتك</small></span></label>
       </fieldset>
+      <fieldset class="modes model-pick">
+        <label><input type="radio" name="model" value="base" ${modelName === "base" ? "checked" : ""} /><span><b>🎯 النسخة الدقيقة</b><small>${MODEL_INFO.base.mbText} ميجا · أدق في التشكيل</small></span></label>
+        <label><input type="radio" name="model" value="tiny" ${modelName === "tiny" ? "checked" : ""} /><span><b>🪶 النسخة الخفيفة</b><small>${MODEL_INFO.tiny.mbText} ميجا · للجوالات الأقدم، أقل دقة قليلاً</small></span></label>
+      </fieldset>
       <button class="btn primary big" type="submit">ابدأ 🎙️</button>
     </form>
     <div class="legend card">
@@ -158,7 +247,9 @@ async function viewSetup(n) {
     const f = new FormData(form);
     let from = +f.get("from"), to = +f.get("to");
     if (to < from) [from, to] = [to, from];
-    loadModel();
+    const want = f.get("model") === "tiny" ? "tiny" : "base";
+    if (want !== modelName) switchModel(want);
+    else if (!(crashes > 0 && modelName === "base")) loadModel();
     location.hash = `#/${f.get("surah")}/${from}-${to}/${f.get("mode")}`;
   });
   const $model = $app.querySelector("#model");
@@ -176,7 +267,7 @@ async function viewRecite(n, from, to, mode) {
   const verses = (await loadSurah(n)).slice(from - 1, to).map((text, i) => ({ surah: n, ayah: from + i, text }));
   const words = buildWords(verses);
   const verseEnd = new Set(verses.map((v) => words.findLastIndex((w) => w.ayah === v.ayah)));
-  loadModel();
+  if (!(crashes > 0 && modelName === "base")) loadModel(); // after a crash, let the reciter choose
 
   let html = "";
   let wi = 0;
@@ -371,10 +462,9 @@ async function viewRecite(n, from, to, mode) {
   $heard.textContent = modelState === "ready" ? "اضغط 🎙️ وابدأ القراءة" : "";
 }
 
-// Once the model has been downloaded on this device, load it as soon as the page
-// opens, so it's ready by the time the surah is chosen.
-try {
-  if (localStorage.getItem("tartil.modelCached") === "1") loadModel();
-} catch {}
+// Once the model has been downloaded and prepared on this device before, load it
+// as soon as the page opens so it's ready by the time the surah is chosen (but
+// not after a load that didn't finish, to avoid crashing again on open).
+if (LS.get("tartil.modelCached") === modelName && !unfinished) loadModel();
 
 route();

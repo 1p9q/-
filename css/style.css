@@ -253,3 +253,6 @@ input[type="text"], input:not([type]), input[type="search"], input[type="number"
 .lab span { color: var(--harakah); font-size: 14px; }
 .ctl.loading { animation: blink 1s ease-in-out infinite; }
 @keyframes blink { 50% { opacity: .4; } }
+.progress.indeterminate i { width: 35%; animation: slide 1.4s ease-in-out infinite; }
+@keyframes slide { from { transform: translateX(120%); } to { transform: translateX(-300%); } }
+.model .actions { margin-top: 4px; }
