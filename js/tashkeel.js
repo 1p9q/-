@@ -23,6 +23,7 @@ const worker = new Worker(new URL("./whisper-worker.js", import.meta.url), { typ
 let modelState = "idle"; // idle | loading | ready | error
 let modelProgress = { loaded: 0, total: 0 };
 let modelError = "";
+let modelDevice = "";
 const pending = new Map();
 let nextId = 1;
 const listeners = new Set();
@@ -33,7 +34,14 @@ worker.onmessage = (e) => {
   if (m.type === "progress") {
     modelState = "loading";
     modelProgress = m;
-  } else if (m.type === "ready") modelState = "ready";
+  } else if (m.type === "warming") modelState = "warming";
+  else if (m.type === "ready") {
+    modelState = "ready";
+    modelDevice = m.device;
+    try {
+      localStorage.setItem("tartil.modelCached", "1");
+    } catch {}
+  }
   else if (m.type === "result" || m.type === "error") {
     if (m.type === "error" && !pending.has(m.id)) {
       modelState = "error";
@@ -50,6 +58,7 @@ worker.onmessage = (e) => {
 };
 function loadModel() {
   if (modelState === "idle" || modelState === "error") {
+    modelError = "";
     modelState = "loading";
     worker.postMessage({ type: "load" });
     notify();
@@ -64,7 +73,8 @@ function transcribe(audio) {
 }
 
 function modelCard() {
-  if (modelState === "ready") return `<div class="model ok">✓ نموذج التلاوة جاهز على جهازك</div>`;
+  if (modelState === "ready") return `<div class="model ok">✓ نموذج التلاوة جاهز${modelDevice === "webgpu" ? " ⚡ (يستخدم معالج الرسوميات)" : ""}</div>`;
+  if (modelState === "warming") return `<div class="model">⏳ تجهيز النموذج… (ثواني)</div>`;
   if (modelState === "loading") {
     const { loaded, total } = modelProgress;
     // files start one after another, so measure against the known total (~162 MB)
@@ -360,5 +370,11 @@ async function viewRecite(n, from, to, mode) {
   paint();
   $heard.textContent = modelState === "ready" ? "اضغط 🎙️ وابدأ القراءة" : "";
 }
+
+// Once the model has been downloaded on this device, load it as soon as the page
+// opens, so it's ready by the time the surah is chosen.
+try {
+  if (localStorage.getItem("tartil.modelCached") === "1") loadModel();
+} catch {}
 
 route();

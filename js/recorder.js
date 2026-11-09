@@ -78,7 +78,7 @@ export class PhraseRecorder {
       this.chunks.push(buf);
       this.segLen += buf.length;
       this.silence = loud ? 0 : this.silence + dur;
-      if (this.silence > 0.9 || this.segLen > RATE * 28) this._flush();
+      if (this.silence > 0.6 || this.segLen > RATE * 28) this._flush();
     }
     this.cb.onLevel && this.cb.onLevel(this.speaking, rms);
   }
