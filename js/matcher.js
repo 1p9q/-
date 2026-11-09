@@ -71,8 +71,8 @@ function formSim(a, b) {
   return Math.max(s1, s2);
 }
 
-function makeForm(norm) {
-  return { norm, skel: skeleton(norm) };
+function makeForm(norm, raw = norm) {
+  return { norm, skel: skeleton(norm), raw };
 }
 
 /** Similarity between a spoken token and an expected word (0..1). */
@@ -110,7 +110,12 @@ export function buildWords(verses) {
 
 /** Split a recognized transcript into comparable tokens. */
 export function tokenize(transcript) {
-  const raw = normalize(transcript).split(/\s+/).filter(Boolean);
+  // keep each token's original (possibly diacritized) spelling for harakat checks
+  const pieces = transcript
+    .split(/\s+/)
+    .map((r) => ({ r, n: normalize(r) }))
+    .filter((x) => x.n);
+  const raw = pieces.map((x) => x.n);
   // Join runs of spelled letter names ("الف لام ميم") into one token so they can be
   // compared with disjointed letters. "يا"/"ها" are also common words, so a run must
   // contain at least one unambiguous letter name.
@@ -120,10 +125,10 @@ export function tokenize(transcript) {
     while (j < raw.length && NAME_TO_LETTER[raw[j].replace(/ء/g, "")]) j++;
     const run = raw.slice(i, j).map((t) => t.replace(/ء/g, ""));
     if (run.length >= 2 && run.some((t) => t !== "يا" && t !== "ها")) {
-      out.push(makeForm(run.join("")));
+      out.push(makeForm(run.join(""), pieces.slice(i, j).map((x) => x.r).join(" ")));
       i = j;
     } else {
-      out.push(makeForm(raw[i]));
+      out.push(makeForm(raw[i], pieces[i].r));
       i++;
     }
   }
@@ -153,6 +158,7 @@ export function align(words, tokens, opts = {}) {
   const n = words.length;
   const status = new Array(n).fill("pending");
   const heard = new Array(n).fill(null);
+  const heardRaw = new Array(n).fill(null); // diacritized token, when exactly one token matched the word
   const hinted = opts.hinted || new Set();
   const accepted = opts.accepted || new Set(); // words the reciter tapped as "I said it right"
   let p = 0;
@@ -182,6 +188,7 @@ export function align(words, tokens, opts = {}) {
     if (!atEnd && simP >= OK) {
       markOk(p);
       heard[p] = tok.norm;
+      heardRaw[p] = tok.raw;
       p++;
       started = true;
       continue;
@@ -228,6 +235,7 @@ export function align(words, tokens, opts = {}) {
     }
     if (back >= 0) {
       markOk(back);
+      heardRaw[back] = tok.raw; // the latest reading of a repeated word is the one judged
       p = back + 1;
       continue;
     }
@@ -259,6 +267,7 @@ export function align(words, tokens, opts = {}) {
         }
         markOk(jump);
         heard[jump] = tok.norm;
+        heardRaw[jump] = tok.raw;
         p = jump + 1;
         started = true;
         continue;
@@ -293,7 +302,7 @@ export function align(words, tokens, opts = {}) {
     extras++;
   }
   skipHinted();
-  return { status, heard, pointer: p, extras };
+  return { status, heard, heardRaw, pointer: p, extras };
 }
 
 /** Summary counts for a finished alignment. */

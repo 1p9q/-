@@ -17,6 +17,8 @@
   --hinted: #3c64b1;
   --hinted-bg: #e1e9fb;
   --hide: #d9d1bb;
+  --harakah: #7b3fb0;
+  --harakah-bg: #efe2fa;
   --qfont: 30px;
 }
 @media (prefers-color-scheme: dark) {
@@ -38,6 +40,8 @@
     --hinted: #8fb0ff;
     --hinted-bg: #1f2b47;
     --hide: #34403b;
+    --harakah: #d3a6ff;
+    --harakah-bg: #3a2650;
   }
 }
 
@@ -225,3 +229,25 @@ input[type="text"], input:not([type]), input[type="search"], input[type="number"
 .settings .row { display: grid; grid-template-columns: 1fr 1.2fr; align-items: center; gap: 12px; margin: 8px 0; }
 .settings input[type="range"] { width: 100%; accent-color: var(--brand); }
 .preview { font-family: "Amiri Quran", "Amiri", serif; text-align: center; margin: 8px 0; }
+
+/* harakat check page */
+.w.harakah { color: var(--harakah); background: var(--harakah-bg); text-decoration: underline dotted; text-underline-offset: 10px; }
+.w.unchecked { color: var(--ok); text-decoration: underline dotted color-mix(in srgb, var(--ok) 40%, transparent); text-underline-offset: 10px; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 14px; }
+.legend .w { padding: 2px 8px; }
+.counts .harakah, .tag.harakah { color: var(--harakah); background: var(--harakah-bg); }
+.beta { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--harakah-bg); color: var(--harakah); }
+.model { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin: 0 0 12px; display: grid; gap: 8px; font-size: 14px; }
+.model:empty { display: none; }
+.model.ok { color: var(--ok); }
+.model.warn { border-color: var(--wrong); }
+.progress { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.progress i { display: block; height: 100%; background: var(--brand); transition: width .3s; }
+.detail { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px; margin-top: 10px; display: grid; gap: 4px; }
+.q { font-family: "Amiri Quran", "Amiri", serif; font-weight: 400; font-size: 1.25em; }
+.harakah-note { color: var(--harakah); }
+.intro p { margin: 6px 0 0; }
+.setup > label { display: grid; gap: 4px; color: var(--muted); font-size: 14px; margin-bottom: 12px; }
+.mic.on.speaking::after { border-color: var(--gold); }
+.lab { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: var(--ink); border-color: var(--harakah); }
+.lab span { color: var(--harakah); font-size: 14px; }

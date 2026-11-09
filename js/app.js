@@ -118,6 +118,7 @@ function viewHome() {
         : ""
     }
     ${!speechSupported ? `<div class="card warn">المتصفح هذا ما يدعم التعرّف على الصوت. افتح الموقع من <b>Safari</b> على الآيفون أو <b>Chrome</b> على الأندرويد والكمبيوتر.</div>` : ""}
+    <a class="card lab" href="tashkeel.html${last ? `#/${last.surah}` : ""}"><span>🧪 جديد (تجريبي)</span><b>تدقيق التشكيل بالذكاء الاصطناعي ←</b></a>
     <div class="search"><input id="q" type="search" placeholder="ابحث عن سورة…" autocomplete="off" /></div>
     <ol class="surahs" id="list">
       ${chapters
