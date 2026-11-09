@@ -251,3 +251,5 @@ input[type="text"], input:not([type]), input[type="search"], input[type="number"
 .mic.on.speaking::after { border-color: var(--gold); }
 .lab { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: var(--ink); border-color: var(--harakah); }
 .lab span { color: var(--harakah); font-size: 14px; }
+.ctl.loading { animation: blink 1s ease-in-out infinite; }
+@keyframes blink { 50% { opacity: .4; } }

@@ -356,19 +356,45 @@ async function viewRecite(n, from, to, mode) {
     e.currentTarget.querySelector("small").textContent = hid ? "إظهار" : "إخفاء";
   });
 
-  // listen to a reciter (EveryAyah), from the current verse to the end of the range
+  // listen to a reciter (EveryAyah), from the current verse to the end of the range.
+  // Verses are fetched ahead of time into memory, so playback starts at once and
+  // there's no gap between verses; one <audio> element plays them all (iPhone
+  // only lets an element that the user started keep playing).
   const audio = new Audio();
   let playing = false;
+  let playToken = 0;
   const $listen = $app.querySelector("#listen");
+  const pad = (x) => String(x).padStart(3, "0");
+  const clips = new Map(); // ayah -> Promise<blob URL | null>
+  function fetchAyah(ay) {
+    if (ay < from || ay > to) return Promise.resolve(null);
+    if (!clips.has(ay)) {
+      const url = `https://everyayah.com/data/${prefs.reciter}/${pad(n)}${pad(ay)}.mp3`;
+      clips.set(
+        ay,
+        fetch(url)
+          .then((r) => (r.ok ? r.blob() : Promise.reject()))
+          .then((b) => URL.createObjectURL(b))
+          .catch(() => url) // fall back to streaming the file directly
+      );
+    }
+    return clips.get(ay);
+  }
   function stopAudio() {
     playing = false;
+    playToken++;
     audio.pause();
-    $listen.classList.remove("on");
+    $listen.classList.remove("on", "loading");
   }
-  function playAyah(ay) {
+  async function playAyah(ay) {
     if (ay > to) return stopAudio();
-    const pad = (x) => String(x).padStart(3, "0");
-    audio.src = `https://everyayah.com/data/${prefs.reciter}/${pad(n)}${pad(ay)}.mp3`;
+    const token = ++playToken;
+    $listen.classList.add("loading");
+    const src = await fetchAyah(ay);
+    if (token !== playToken || !playing) return;
+    $listen.classList.remove("loading");
+    fetchAyah(ay + 1); // get the next verse ready while this one plays
+    audio.src = src;
     audio.dataset.ayah = ay;
     audio.play().catch(() => stopAudio());
   }
@@ -381,10 +407,13 @@ async function viewRecite(n, from, to, mode) {
     const cur = words[Math.min(result.pointer, words.length - 1)];
     playAyah(cur ? cur.ayah : from);
   });
+  // get the first verse ready as soon as the screen opens (small: ~100-200 KB)
+  setTimeout(() => fetchAyah(from), 1500);
 
   cleanup = () => {
     listener.stop();
     stopAudio();
+    for (const c of clips.values()) c.then((u) => u && u.startsWith("blob:") && URL.revokeObjectURL(u));
   };
   paint();
   if (!speechSupported) $heard.textContent = "⚠️ المتصفح لا يدعم التعرّف على الصوت. استخدم Safari أو Chrome.";
