@@ -58,7 +58,7 @@ function formSim(a, b) {
   // a, b: {norm, skel}
   if (a.skel === b.skel || a.norm === b.norm) return 1;
   const L = Math.max(a.skel.length, b.skel.length);
-  if (L <= 2) return 0.4; // very short words must match exactly
+  if (L <= 2) return lev(a.norm, b.norm) <= 1 ? 0.5 : 0.25; // short words: never "ok" unless exact
   const s1 = 1 - lev(a.skel, b.skel) / L;
   const s2 = 1 - lev(a.norm, b.norm) / Math.max(a.norm.length, b.norm.length);
   return Math.max(s1, s2);
@@ -119,8 +119,10 @@ export function tokenize(transcript) {
   return out;
 }
 
-const MATCH = 0.75; // counts as the right word
-const WRONG = 0.45; // close enough to be an attempt at this word (but wrong)
+const MATCH = 0.75; // clearly the right word (also used to detect skips/repeats)
+const NEAR = 0.6; // close enough to accept as the current word
+const WRONG = 0.45; // an attempt at this word, but wrong
+const TRY = 0.3; // faint resemblance: decided as wrong once the reciter repeats or moves on
 const WINDOW = 6; // how far ahead to look for skipped words
 const BACK = 3; // how far back a repetition/correction may go
 
@@ -130,7 +132,7 @@ const BACK = 3; // how far back a repetition/correction may go
  *
  * @param {object[]} words   output of buildWords
  * @param {object[]} tokens  output of tokenize
- * @param {{final?: boolean, hinted?: Set<number>}} opts
+ * @param {{final?: boolean, hinted?: Set<number>, accepted?: Set<number>}} opts
  *   final: transcript is complete (commit tentative skips at the end)
  *   hinted: indexes the reciter revealed with the hint button
  * @returns {{status: string[], heard: (string|null)[], pointer: number, extras: number}}
@@ -141,12 +143,16 @@ export function align(words, tokens, opts = {}) {
   const status = new Array(n).fill("pending");
   const heard = new Array(n).fill(null);
   const hinted = opts.hinted || new Set();
+  const accepted = opts.accepted || new Set(); // words the reciter tapped as "I said it right"
   let p = 0;
   let extras = 0;
+  // unmatched tokens heard while waiting at position p (the reciter retrying a word)
+  let stuck = { p: -1, count: 0, tok: null, sim: 0 };
+  let started = false;
 
   const skipHinted = () => {
-    while (p < n && hinted.has(p) && status[p] === "pending") {
-      status[p] = "hinted";
+    while (p < n && (hinted.has(p) || accepted.has(p)) && status[p] === "pending") {
+      status[p] = hinted.has(p) ? "hinted" : "ok";
       p++;
     }
   };
@@ -161,10 +167,12 @@ export function align(words, tokens, opts = {}) {
     const atEnd = p >= n;
 
     // 1) the expected word itself (also: one word heard as two tokens, or two words as one)
-    if (!atEnd && similarity(tok, words[p]) >= MATCH) {
+    const simP = atEnd ? 0 : similarity(tok, words[p]);
+    if (!atEnd && (simP >= MATCH || (simP >= NEAR && !(p + 1 < n && similarity(tok, words[p + 1]) >= MATCH)))) {
       markOk(p);
       heard[p] = tok.norm;
       p++;
+      started = true;
       continue;
     }
     if (!atEnd && next) {
@@ -174,6 +182,7 @@ export function align(words, tokens, opts = {}) {
         heard[p] = tok.norm + " " + next.norm;
         p++;
         t++;
+        started = true;
         continue;
       }
     }
@@ -223,23 +232,43 @@ export function align(words, tokens, opts = {}) {
         : opts.final;
       if (confirmed) {
         for (let k = p; k < jump; k++) if (status[k] === "pending") status[k] = hinted.has(k) ? "hinted" : "missed";
+        // the reciter did try the word they "skipped": count it as wrong, not missed
+        if (stuck.p === p && stuck.sim >= TRY && status[p] === "missed") {
+          status[p] = "wrong";
+          heard[p] = stuck.tok.norm;
+        }
         markOk(jump);
         heard[jump] = tok.norm;
         p = jump + 1;
+        started = true;
         continue;
       }
       if (!next) break; // wait for more speech before deciding
     }
 
     // 4) an attempt at the current word that came out wrong
-    if (similarity(tok, words[p]) >= WRONG) {
+    if (simP >= WRONG) {
       status[p] = "wrong";
       heard[p] = tok.norm;
       p++;
+      started = true;
       continue;
     }
 
-    // 5) noise / something not in the text
+    // 5) not recognizable. If the reciter keeps retrying the same word, decide
+    //    instead of waiting forever (but ignore e.g. the basmala/isti'adha before starting).
+    if (stuck.p !== p) stuck = { p, count: 0, tok: null, sim: 0 };
+    stuck.count++;
+    if (simP > stuck.sim) {
+      stuck.sim = simP;
+      stuck.tok = tok;
+    }
+    if (started && stuck.count >= 2 && stuck.sim >= TRY) {
+      status[p] = "wrong";
+      heard[p] = stuck.tok.norm;
+      p++;
+      continue;
+    }
     extras++;
   }
   skipHinted();

@@ -160,7 +160,7 @@ input[type="text"], input:not([type]), input[type="search"], input[type="number"
 .w.missed { color: var(--missed); background: var(--missed-bg); text-decoration: underline wavy; text-underline-offset: 10px; }
 .w.corrected { color: var(--corrected); background: var(--corrected-bg); }
 .w.hinted { color: var(--hinted); background: var(--hinted-bg); }
-.w.cur { box-shadow: inset 0 -3px 0 var(--gold); }
+.w.cur { box-shadow: inset 0 -3px 0 var(--gold); cursor: pointer; }
 .end { display: inline-grid; place-items: center; min-width: 1.3em; height: 1.3em; margin: 0 2px; border-radius: 50%; border: 1px solid var(--gold); color: var(--gold); font-family: "Tajawal", sans-serif; font-size: calc(var(--qfont) * 0.45); vertical-align: middle; }
 
 /* memorization mode: unread words are covered */

@@ -86,6 +86,33 @@ test("hinted words are counted as hinted", () => {
   assert.deepEqual(r.status, ["ok", "ok", "hinted", "ok"]);
 });
 
+test("a close-but-not-exact word is accepted, not left waiting", () => {
+  // الضالين heard as الظالمين; عالين for العالمين
+  let r = run(1, 7, 7, "صراط الذين أنعمت عليهم غير المغضوب عليهم ولا الظالمين");
+  assert.equal(r.status.at(-1), "ok");
+  r = run(1, 2, 2, "الحمد لله رب عالين");
+  assert.deepEqual(r.status, ["ok", "ok", "ok", "ok"]);
+});
+
+test("retrying an unrecognizable word gets a decision", () => {
+  // "البيت" barely resembles العالمين: once is ignored, twice is judged wrong
+  let r = run(1, 2, 3, "الحمد لله رب البيت");
+  assert.equal(r.status[3], "pending");
+  r = run(1, 2, 3, "الحمد لله رب البيت البيت");
+  assert.equal(r.status[3], "wrong");
+  assert.equal(r.pointer, 4);
+});
+
+test("an unclear attempt followed by moving on counts as wrong, not missed", () => {
+  const r = run(1, 2, 3, "الحمد لله رب البيت الرحمن الرحيم", { final: true });
+  assert.deepEqual(r.status, ["ok", "ok", "ok", "wrong", "ok", "ok"]);
+});
+
+test("noise before starting is not judged", () => {
+  const r = run(112, 1, 1, "أعوذ بالله من الشيطان الرجيم قل هو الله أحد", { final: true });
+  assert.ok(r.status.every((s) => s === "ok"), r.status.join(","));
+});
+
 test("all 114 surahs build words", () => {
   let count = 0;
   for (let n = 1; n <= 114; n++) {

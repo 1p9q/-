@@ -196,8 +196,9 @@ async function viewRecite(n, from, to, mode) {
   const verses = (await loadSurah(n)).slice(from - 1, to).map((text, i) => ({ surah: n, ayah: from + i, text }));
   const words = buildWords(verses);
   const hinted = new Set();
+  const accepted = new Set();
   const prefs = store.prefs();
-  let result = align(words, [], { hinted });
+  let result = align(words, [], { hinted, accepted });
   let finished = false;
 
   const showBasmala = from === 1 && n !== 1 && n !== 9;
@@ -251,7 +252,7 @@ async function viewRecite(n, from, to, mode) {
   }
 
   function update(text, final = false) {
-    result = align(words, tokenize(text), { hinted, final });
+    result = align(words, tokenize(text), { hinted, accepted, final });
     $heard.textContent = text ? "سمعت: " + text.split(/\s+/).slice(-12).join(" ") : "";
     paint();
     if (!finished && result.pointer >= words.length && !result.status.includes("pending")) finish();
@@ -279,7 +280,7 @@ async function viewRecite(n, from, to, mode) {
     if (finished) return;
     finished = true;
     listener.stop();
-    result = align(words, tokenize(listener.text), { hinted, final: true });
+    result = align(words, tokenize(listener.text), { hinted, accepted, final: true });
     paint();
     const c = summarize(result.status);
     const recited = c.total - c.pending;
@@ -330,10 +331,18 @@ async function viewRecite(n, from, to, mode) {
     listener.stop();
     listener.reset();
     hinted.clear();
+    accepted.clear();
     lastPointer = -1;
     update("");
   });
   $app.querySelector("#finish").addEventListener("click", finish);
+  // tap the current (gold-underlined) word when the recognizer can't catch it
+  $m.addEventListener("click", (e) => {
+    const el = e.target.closest(".w");
+    if (!el || finished || +el.dataset.i !== result.pointer) return;
+    accepted.add(result.pointer);
+    update(listener.text);
+  });
   $app.querySelector("#hint")?.addEventListener("click", () => {
     if (result.pointer < words.length) {
       hinted.add(result.pointer);
@@ -378,7 +387,7 @@ async function viewRecite(n, from, to, mode) {
   };
   paint();
   if (!speechSupported) $heard.textContent = "⚠️ المتصفح لا يدعم التعرّف على الصوت. استخدم Safari أو Chrome.";
-  else $heard.textContent = "اضغط 🎙️ وابدأ القراءة";
+  else $heard.textContent = "اضغط 🎙️ وابدأ القراءة. إذا ما تلوّنت كلمة كمّل القراءة، أو المسها إذا متأكد إنك قلتها صح";
 }
 
 // ---------- mistakes ----------
